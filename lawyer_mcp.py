@@ -588,7 +588,21 @@ def _build_tools() -> list[Tool]:
     return tools
 
 
-TOOLS: list[Tool] = _build_tools()
+# Tools are (re)built lazily so env var changes take effect without requiring module reload.
+_TOOLS_CACHE: tuple[tuple[str, bool], list[Tool]] | None = None
+
+
+def _current_tools() -> list[Tool]:
+    global _TOOLS_CACHE
+
+    key = (_toolset(), _dangerous_tools_enabled())
+    if _TOOLS_CACHE is None or _TOOLS_CACHE[0] != key:
+        _TOOLS_CACHE = (key, _build_tools())
+    return _TOOLS_CACHE[1]
+
+
+# Backwards-compat: some tests/importers expect a TOOLS global.
+TOOLS: list[Tool] = _current_tools()
 
 
 def _handle_initialize(_params: JSON) -> JSON:
@@ -606,16 +620,17 @@ def _handle_initialize(_params: JSON) -> JSON:
 
 
 def _handle_tools_list() -> JSON:
+    tools = _current_tools()
     return {
         "tools": [
             {"name": t.name, "description": t.description, "inputSchema": t.input_schema}
-            for t in TOOLS
+            for t in tools
         ]
     }
 
 
 def _tool_by_name(name: str) -> Tool | None:
-    for t in TOOLS:
+    for t in _current_tools():
         if t.name == name:
             return t
     return None
