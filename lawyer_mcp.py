@@ -127,7 +127,21 @@ def _http_get_json(path: str, query: dict[str, Any] | None = None) -> Any:
         try:
             with urllib.request.urlopen(req, timeout=timeout_s) as resp:
                 raw = resp.read().decode("utf-8")
-            return json.loads(raw) if raw.strip() else None
+
+            if not raw.strip():
+                return None
+
+            try:
+                return json.loads(raw)
+            except json.JSONDecodeError as e:
+                # Upstream is expected to return JSON, but proxies/CDNs sometimes emit HTML.
+                snippet = raw.strip()
+                if len(snippet) > 500:
+                    snippet = snippet[:500] + "…"
+                raise OperationalError(
+                    f"Invalid JSON response for {url}: {e}",
+                    data={"url": url, "body": snippet},
+                )
         except urllib.error.HTTPError as e:
             last_http_error = e
 
