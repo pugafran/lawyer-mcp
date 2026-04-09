@@ -430,6 +430,25 @@ def main() -> None:
                 _write(_jsonrpc_result(id_, _handle_tools_call(params)))
             else:
                 _write(_jsonrpc_error(id_, -32601, f"Method not found: {method}"))
+        except (KeyError, ValueError, TypeError) as exc:
+            # Invalid params / unknown tool name / type coercion failures.
+            _write(
+                _jsonrpc_error(
+                    id_,
+                    -32602,
+                    f"Invalid params: {exc}",
+                    data={"traceback": traceback.format_exc()},
+                )
+            )
+        except RuntimeError as exc:
+            # Operational errors (missing API key, upstream HTTP errors, network issues).
+            _write(
+                _jsonrpc_error(
+                    id_,
+                    -32000,
+                    str(exc),
+                )
+            )
         except Exception as exc:
             _write(
                 _jsonrpc_error(
