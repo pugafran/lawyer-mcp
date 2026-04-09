@@ -18,8 +18,16 @@ This server expects:
 
 - `LEGALIZE_API_KEY` env var (either the raw `leg_...` token or the full `Bearer leg_...` value)
 
-## Run (planned)
+## Run
 
 ```bash
-python -m lawyer_mcp
+# required
+export LEGALIZE_API_KEY="leg_..."   # or "Bearer leg_..."
+
+# optional (useful for tests/self-hosted mirrors)
+# export LEGALIZE_BASE_URL="https://legalize.dev"
+# export LEGALIZE_HTTP_RETRIES=2
+# export LEGALIZE_HTTP_TIMEOUT=30
+
+python3 -m lawyer_mcp
 ```

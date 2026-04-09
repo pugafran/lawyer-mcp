@@ -7,6 +7,7 @@ import json
 import os
 import sys
 import traceback
+import time
 import urllib.error
 import urllib.parse
 import urllib.request
@@ -28,7 +29,22 @@ class Tool:
     input_schema: JSON
 
 
-LEGALIZE_BASE_URL = "https://legalize.dev"
+DEFAULT_LEGALIZE_BASE_URL = "https://legalize.dev"
+
+
+def _base_url() -> str:
+    # Useful for tests/self-hosted deployments.
+    return os.environ.get("LEGALIZE_BASE_URL", DEFAULT_LEGALIZE_BASE_URL).rstrip("/")
+
+
+def _build_url(path: str, query: dict[str, Any] | None = None) -> str:
+    base = _base_url() + "/"
+    url = urllib.parse.urljoin(base, path.lstrip("/"))
+    if query:
+        qs = urllib.parse.urlencode({k: v for k, v in query.items() if v is not None}, doseq=True)
+        if qs:
+            url = url + "?" + qs
+    return url
 
 
 def _jsonrpc_result(id_: Any, result: Any) -> JSON:
@@ -74,9 +90,7 @@ def _auth_header_value() -> str:
 
 
 def _http_get_json(path: str, query: dict[str, Any] | None = None) -> Any:
-    url = urllib.parse.urljoin(LEGALIZE_BASE_URL, path)
-    if query:
-        url = url + "?" + urllib.parse.urlencode({k: v for k, v in query.items() if v is not None})
+    url = _build_url(path, query=query)
 
     req = urllib.request.Request(url)
     # OpenAPI securitySchemes.ApiKeyAuth:
@@ -85,17 +99,53 @@ def _http_get_json(path: str, query: dict[str, Any] | None = None) -> Any:
     #   description: Bearer token
     req.add_header("Authorization", _auth_header_value())
     req.add_header("Accept", "application/json")
+    req.add_header("User-Agent", "lawyer-mcp/0.1.0 (+https://github.com/pugafran/lawyer-mcp)")
 
-    try:
-        with urllib.request.urlopen(req, timeout=30) as resp:
-            raw = resp.read().decode("utf-8")
-    except urllib.error.HTTPError as e:
-        body = e.read().decode("utf-8", errors="replace") if hasattr(e, "read") else ""
-        raise RuntimeError(f"HTTP {e.code} for {url}: {body}".strip())
-    except urllib.error.URLError as e:
-        raise RuntimeError(f"Network error for {url}: {e}")
+    # Lightweight resilience: Legalize can rate-limit (401/429) or have transient upstream errors.
+    max_retries = int(os.environ.get("LEGALIZE_HTTP_RETRIES", "2"))
+    timeout_s = float(os.environ.get("LEGALIZE_HTTP_TIMEOUT", "30"))
 
-    return json.loads(raw) if raw.strip() else None
+    last_http_error: urllib.error.HTTPError | None = None
+
+    for attempt in range(max_retries + 1):
+        try:
+            with urllib.request.urlopen(req, timeout=timeout_s) as resp:
+                raw = resp.read().decode("utf-8")
+            return json.loads(raw) if raw.strip() else None
+        except urllib.error.HTTPError as e:
+            last_http_error = e
+            # Retry on transient errors.
+            if e.code in {429, 502, 503, 504} and attempt < max_retries:
+                retry_after = None
+                try:
+                    retry_after = e.headers.get("Retry-After")
+                except Exception:
+                    retry_after = None
+
+                if retry_after is not None:
+                    try:
+                        sleep_s = float(retry_after)
+                    except Exception:
+                        sleep_s = 2.0
+                else:
+                    sleep_s = min(2.0 ** attempt, 10.0)
+
+                time.sleep(sleep_s)
+                continue
+
+            body = ""
+            try:
+                body = e.read().decode("utf-8", errors="replace")
+            except Exception:
+                body = ""
+            raise RuntimeError(f"HTTP {e.code} for {url}: {body}".strip())
+        except urllib.error.URLError as e:
+            raise RuntimeError(f"Network error for {url}: {e}")
+
+    # Should be unreachable, but keep a guardrail.
+    if last_http_error is not None:
+        raise RuntimeError(f"HTTP {last_http_error.code} for {url}")
+    raise RuntimeError(f"Request failed for {url}")
 
 
 def tool_countries() -> JSON:
