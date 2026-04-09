@@ -495,6 +495,17 @@ def _tool_by_name(name: str) -> Tool | None:
 
 
 def _validate_args(input_schema: JSON, args: Any) -> JSON:
+    """Best-effort JSONSchema-ish validation.
+
+    We keep this lightweight (no deps), but still enforce the most useful constraints:
+    - required
+    - additionalProperties=false
+    - type coercion (string/integer/object)
+    - integer min/max
+    - string enum
+    - defaults (when present)
+    """
+
     if not isinstance(args, dict):
         raise TypeError("arguments must be an object")
 
@@ -512,6 +523,12 @@ def _validate_args(input_schema: JSON, args: Any) -> JSON:
             raise ValueError(f"Missing required argument: {k}")
 
     out: JSON = {}
+
+    # Apply defaults first (so callers can rely on validated payloads).
+    for k, schema in props.items():
+        if k not in args and isinstance(schema, dict) and "default" in schema:
+            out[k] = schema.get("default")
+
     for k, v in args.items():
         schema = props.get(k)
         if not schema:
@@ -523,14 +540,25 @@ def _validate_args(input_schema: JSON, args: Any) -> JSON:
         if t == "string":
             if v is None:
                 raise TypeError(f"{k} must be a string")
-            out[k] = str(v)
+            sv = str(v)
+            enum = schema.get("enum")
+            if isinstance(enum, list) and enum and sv not in enum:
+                raise ValueError(f"{k} must be one of: {', '.join(map(str, enum))}")
+            out[k] = sv
         elif t == "integer":
             if v is None:
                 raise TypeError(f"{k} must be an integer")
             try:
-                out[k] = int(v)
+                iv = int(v)
             except Exception:
                 raise TypeError(f"{k} must be an integer")
+            min_v = schema.get("minimum")
+            max_v = schema.get("maximum")
+            if min_v is not None and iv < int(min_v):
+                raise ValueError(f"{k} must be >= {min_v}")
+            if max_v is not None and iv > int(max_v):
+                raise ValueError(f"{k} must be <= {max_v}")
+            out[k] = iv
         elif t == "object":
             if not isinstance(v, dict):
                 raise TypeError(f"{k} must be an object")
