@@ -41,6 +41,8 @@ def _base_url() -> str:
 
 
 def _build_url(path: str, query: dict[str, Any] | None = None) -> str:
+    """Build an absolute URL to the Legalize API."""
+
     base = _base_url() + "/"
     url = urllib.parse.urljoin(base, path.lstrip("/"))
     if query:
@@ -100,6 +102,135 @@ def _auth_header_value() -> str:
     return f"Bearer {key}"
 
 
+@dataclass(frozen=True)
+class LegalizeClient:
+    base_url: str
+    authorization: str
+    timeout_s: float = 30.0
+    max_retries: int = 2
+
+    @staticmethod
+    def from_env() -> "LegalizeClient":
+        return LegalizeClient(
+            base_url=_base_url(),
+            authorization=_auth_header_value(),
+            timeout_s=float(os.environ.get("LEGALIZE_HTTP_TIMEOUT", "30")),
+            max_retries=int(os.environ.get("LEGALIZE_HTTP_RETRIES", "2")),
+        )
+
+    def build_url(self, path: str, query: dict[str, Any] | None = None) -> str:
+        base = self.base_url.rstrip("/") + "/"
+        url = urllib.parse.urljoin(base, path.lstrip("/"))
+        if query:
+            qs = urllib.parse.urlencode({k: v for k, v in query.items() if v is not None}, doseq=True)
+            if qs:
+                url = url + "?" + qs
+        return url
+
+    def request_json(
+        self,
+        path: str,
+        *,
+        method: str = "GET",
+        query: dict[str, Any] | None = None,
+        body: Any | None = None,
+    ) -> Any:
+        """HTTP request returning JSON (or None for empty bodies)."""
+
+        url = self.build_url(path, query=query)
+
+        data_bytes: bytes | None = None
+        if body is not None:
+            data_bytes = json.dumps(body).encode("utf-8")
+
+        req = urllib.request.Request(url, method=method.upper(), data=data_bytes)
+        req.add_header("Authorization", self.authorization)
+        req.add_header("Accept", "application/json")
+        if data_bytes is not None:
+            req.add_header("Content-Type", "application/json")
+
+        req.add_header("User-Agent", f"lawyer-mcp/{__version__} (+https://github.com/pugafran/lawyer-mcp)")
+
+        last_http_error: urllib.error.HTTPError | None = None
+
+        for attempt in range(self.max_retries + 1):
+            try:
+                with urllib.request.urlopen(req, timeout=self.timeout_s) as resp:
+                    raw = resp.read().decode("utf-8")
+
+                if not raw.strip():
+                    return None
+
+                try:
+                    return json.loads(raw)
+                except json.JSONDecodeError as e:
+                    snippet = raw.strip()
+                    if len(snippet) > 500:
+                        snippet = snippet[:500] + "…"
+                    raise OperationalError(
+                        f"Invalid JSON response for {url}: {e}",
+                        data={"url": url, "body": snippet},
+                    )
+            except urllib.error.HTTPError as e:
+                last_http_error = e
+
+                # Retry on transient errors.
+                if e.code in {429, 502, 503, 504} and attempt < self.max_retries:
+                    retry_after = None
+                    try:
+                        retry_after = e.headers.get("Retry-After")
+                    except Exception:
+                        retry_after = None
+
+                    if retry_after is not None:
+                        try:
+                            sleep_s = float(retry_after)
+                        except Exception:
+                            sleep_s = 2.0
+                    else:
+                        sleep_s = min(2.0**attempt, 10.0)
+
+                    time.sleep(sleep_s)
+                    continue
+
+                body_text = ""
+                try:
+                    body_text = e.read().decode("utf-8", errors="replace")
+                except Exception:
+                    body_text = ""
+
+                body_json: Any | None = None
+                if body_text.strip():
+                    try:
+                        body_json = json.loads(body_text)
+                    except Exception:
+                        body_json = None
+
+                msg = f"HTTP {e.code} for {url}".strip()
+                if isinstance(body_json, dict) and body_json.get("detail"):
+                    msg = msg + f": {body_json.get('detail')}"
+                elif body_text.strip():
+                    msg = msg + f": {body_text.strip()}"
+
+                raise OperationalError(
+                    msg,
+                    data={
+                        "status": e.code,
+                        "url": url,
+                        "body": body_json if body_json is not None else body_text,
+                    },
+                )
+            except urllib.error.URLError as e:
+                raise OperationalError(f"Network error for {url}: {e}", data={"url": url})
+
+        if last_http_error is not None:
+            raise OperationalError(
+                f"HTTP {last_http_error.code} for {url}",
+                data={"status": last_http_error.code, "url": url},
+            )
+        raise OperationalError(f"Request failed for {url}", data={"url": url})
+
+
 def _http_request_json(
     path: str,
     *,
@@ -107,119 +238,9 @@ def _http_request_json(
     query: dict[str, Any] | None = None,
     body: Any | None = None,
 ) -> Any:
-    """HTTP request returning JSON (or None for empty bodies).
+    """Backwards-compatible wrapper used by existing tool functions/tests."""
 
-    Supports the minimal subset we need for Legalize.dev:
-    - GET endpoints under /api/v1/*
-    - authenticated POST endpoints like /api/rotate-key
-
-    Raises OperationalError with structured data when possible.
-    """
-
-    url = _build_url(path, query=query)
-
-    data_bytes: bytes | None = None
-    if body is not None:
-        data_bytes = json.dumps(body).encode("utf-8")
-
-    req = urllib.request.Request(url, method=method.upper(), data=data_bytes)
-
-    # OpenAPI securitySchemes.ApiKeyAuth:
-    #   in: header
-    #   name: Authorization
-    #   description: Bearer token
-    req.add_header("Authorization", _auth_header_value())
-    req.add_header("Accept", "application/json")
-    if data_bytes is not None:
-        req.add_header("Content-Type", "application/json")
-
-    req.add_header("User-Agent", f"lawyer-mcp/{__version__} (+https://github.com/pugafran/lawyer-mcp)")
-
-    # Lightweight resilience: Legalize can rate-limit (401/429) or have transient upstream errors.
-    max_retries = int(os.environ.get("LEGALIZE_HTTP_RETRIES", "2"))
-    timeout_s = float(os.environ.get("LEGALIZE_HTTP_TIMEOUT", "30"))
-
-    last_http_error: urllib.error.HTTPError | None = None
-
-    for attempt in range(max_retries + 1):
-        try:
-            with urllib.request.urlopen(req, timeout=timeout_s) as resp:
-                raw = resp.read().decode("utf-8")
-
-            if not raw.strip():
-                return None
-
-            try:
-                return json.loads(raw)
-            except json.JSONDecodeError as e:
-                # Upstream is expected to return JSON, but proxies/CDNs sometimes emit HTML.
-                snippet = raw.strip()
-                if len(snippet) > 500:
-                    snippet = snippet[:500] + "…"
-                raise OperationalError(
-                    f"Invalid JSON response for {url}: {e}",
-                    data={"url": url, "body": snippet},
-                )
-        except urllib.error.HTTPError as e:
-            last_http_error = e
-
-            # Retry on transient errors.
-            if e.code in {429, 502, 503, 504} and attempt < max_retries:
-                retry_after = None
-                try:
-                    retry_after = e.headers.get("Retry-After")
-                except Exception:
-                    retry_after = None
-
-                if retry_after is not None:
-                    try:
-                        sleep_s = float(retry_after)
-                    except Exception:
-                        sleep_s = 2.0
-                else:
-                    sleep_s = min(2.0**attempt, 10.0)
-
-                time.sleep(sleep_s)
-                continue
-
-            body_text = ""
-            try:
-                body_text = e.read().decode("utf-8", errors="replace")
-            except Exception:
-                body_text = ""
-
-            body_json: Any | None = None
-            if body_text.strip():
-                try:
-                    body_json = json.loads(body_text)
-                except Exception:
-                    body_json = None
-
-            # Produce a clean message, and keep a structured payload for callers.
-            msg = f"HTTP {e.code} for {url}".strip()
-            if isinstance(body_json, dict) and body_json.get("detail"):
-                msg = msg + f": {body_json.get('detail')}"
-            elif body_text.strip():
-                msg = msg + f": {body_text.strip()}"
-
-            raise OperationalError(
-                msg,
-                data={
-                    "status": e.code,
-                    "url": url,
-                    "body": body_json if body_json is not None else body_text,
-                },
-            )
-        except urllib.error.URLError as e:
-            raise OperationalError(f"Network error for {url}: {e}", data={"url": url})
-
-    # Should be unreachable, but keep a guardrail.
-    if last_http_error is not None:
-        raise OperationalError(
-            f"HTTP {last_http_error.code} for {url}",
-            data={"status": last_http_error.code, "url": url},
-        )
-    raise OperationalError(f"Request failed for {url}", data={"url": url})
+    return LegalizeClient.from_env().request_json(path, method=method, query=query, body=body)
 
 
 def _http_get_json(path: str, query: dict[str, Any] | None = None) -> Any:
@@ -470,50 +491,46 @@ def _handle_tools_call(params: JSON) -> JSON:
     name = params.get("name")
     args = params.get("arguments") or {}
 
-    if name == "legalize_countries":
-        payload = tool_countries()
-    elif name == "legalize_jurisdictions":
-        payload = tool_jurisdictions(str(args["country"]))
-    elif name == "legalize_laws":
-        payload = tool_laws(
+    def _opt_str(k: str) -> str | None:
+        return str(args[k]) if args.get(k) is not None else None
+
+    def _opt_int(k: str) -> int | None:
+        return int(args[k]) if args.get(k) is not None else None
+
+    dispatch: dict[str, Any] = {
+        "legalize_countries": lambda: tool_countries(),
+        "legalize_jurisdictions": lambda: tool_jurisdictions(str(args["country"])),
+        "legalize_laws": lambda: tool_laws(
             str(args["country"]),
-            q=(str(args["q"]) if args.get("q") is not None else None),
+            q=_opt_str("q"),
             page=int(args.get("page", 1)),
             per_page=int(args.get("per_page", 50)),
-            law_type=(str(args["law_type"]) if args.get("law_type") is not None else None),
-            year=(int(args["year"]) if args.get("year") is not None else None),
-            status=(str(args["status"]) if args.get("status") is not None else None),
-            jurisdiction=(str(args["jurisdiction"]) if args.get("jurisdiction") is not None else None),
-        )
-    elif name == "legalize_law_at_commit":
-        payload = tool_law_at_commit(str(args["country"]), str(args["law_id"]), str(args["sha"]))
-    elif name == "legalize_rangos":
-        payload = tool_rangos(str(args["country"]))
-    elif name == "legalize_stats":
-        payload = tool_stats(
-            str(args["country"]),
-            jurisdiction=(str(args["jurisdiction"]) if args.get("jurisdiction") is not None else None),
-        )
-    elif name == "legalize_law_meta":
-        payload = tool_law_meta(str(args["country"]), str(args["law_id"]))
-    elif name == "legalize_law_get":
-        payload = tool_law_get(str(args["country"]), str(args["law_id"]))
-    elif name == "legalize_reforms":
-        payload = tool_reforms(
+            law_type=_opt_str("law_type"),
+            year=_opt_int("year"),
+            status=_opt_str("status"),
+            jurisdiction=_opt_str("jurisdiction"),
+        ),
+        "legalize_law_at_commit": lambda: tool_law_at_commit(str(args["country"]), str(args["law_id"]), str(args["sha"])),
+        "legalize_rangos": lambda: tool_rangos(str(args["country"])),
+        "legalize_stats": lambda: tool_stats(str(args["country"]), jurisdiction=_opt_str("jurisdiction")),
+        "legalize_law_meta": lambda: tool_law_meta(str(args["country"]), str(args["law_id"])),
+        "legalize_law_get": lambda: tool_law_get(str(args["country"]), str(args["law_id"])),
+        "legalize_reforms": lambda: tool_reforms(
             str(args["country"]),
             str(args["law_id"]),
             limit=int(args.get("limit", 100)),
             offset=int(args.get("offset", 0)),
-        )
-    elif name == "legalize_commits":
-        payload = tool_commits(str(args["country"]), str(args["law_id"]))
-    elif name == "legalize_account":
-        payload = tool_account()
-    elif name == "legalize_rotate_key":
-        payload = tool_rotate_key()
-    else:
+        ),
+        "legalize_commits": lambda: tool_commits(str(args["country"]), str(args["law_id"])),
+        "legalize_account": lambda: tool_account(),
+        "legalize_rotate_key": lambda: tool_rotate_key(),
+    }
+
+    fn = dispatch.get(str(name))
+    if fn is None:
         raise ValueError(f"Unknown tool: {name}")
 
+    payload = fn()
     return {"content": [{"type": "text", "text": json.dumps(payload, ensure_ascii=False, indent=2)}]}
 
 
