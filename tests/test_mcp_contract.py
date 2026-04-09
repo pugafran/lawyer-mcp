@@ -44,6 +44,32 @@ class TestMcpContract(unittest.TestCase):
             self.assertIn("legalize_rangos", names)
             self.assertIn("legalize_stats", names)
             self.assertIn("legalize_account", names)
+            # Dangerous tool: disabled by default.
+            self.assertNotIn("legalize_rotate_key", names)
+        finally:
+            if proc.poll() is None:
+                proc.terminate()
+                try:
+                    proc.communicate(timeout=1)
+                except Exception:
+                    proc.kill()
+                    proc.communicate(timeout=1)
+
+    def test_tools_list_can_enable_dangerous_tools(self):
+        proc = subprocess.Popen(
+            [sys.executable, "-m", "lawyer_mcp"],
+            stdin=subprocess.PIPE,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+            env={
+                "LEGALIZE_API_KEY": "test",
+                "LEGALIZE_ENABLE_DANGEROUS_TOOLS": "1",
+            },
+        )
+        try:
+            _ = send(proc, {"jsonrpc": "2.0", "id": 1, "method": "initialize", "params": {}})
+            tools = send(proc, {"jsonrpc": "2.0", "id": 2, "method": "tools/list"})
+            names = {t["name"] for t in tools["result"]["tools"]}
             self.assertIn("legalize_rotate_key", names)
         finally:
             if proc.poll() is None:

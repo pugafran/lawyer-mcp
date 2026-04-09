@@ -343,6 +343,16 @@ def tool_rotate_key() -> JSON:
     return {"rotated": _http_post_json("/api/rotate-key")}
 
 
+def _dangerous_tools_enabled() -> bool:
+    """Guardrail: disable tools with irreversible side effects by default.
+
+    Set LEGALIZE_ENABLE_DANGEROUS_TOOLS=1 to expose them.
+    """
+
+    v = os.environ.get("LEGALIZE_ENABLE_DANGEROUS_TOOLS", "").strip().lower()
+    return v in {"1", "true", "yes", "on"}
+
+
 TOOLS: list[Tool] = [
     Tool(
         name="legalize_countries",
@@ -458,12 +468,17 @@ TOOLS: list[Tool] = [
         description="Get account usage/limits info for the current API key (does not count against quota).",
         input_schema={"type": "object", "properties": {}, "additionalProperties": False},
     ),
-    Tool(
-        name="legalize_rotate_key",
-        description="Rotate the current API key and return the new key (shown once).",
-        input_schema={"type": "object", "properties": {}, "additionalProperties": False},
-    ),
 ]
+
+# Opt-in tools with irreversible side effects.
+if _dangerous_tools_enabled():
+    TOOLS.append(
+        Tool(
+            name="legalize_rotate_key",
+            description="Rotate the current API key and return the new key (shown once).",
+            input_schema={"type": "object", "properties": {}, "additionalProperties": False},
+        )
+    )
 
 
 def _handle_initialize(_params: JSON) -> JSON:

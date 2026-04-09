@@ -33,7 +33,7 @@ Minimal tools derived from `https://legalize.dev/openapi.json` (API v1):
 - `legalize_rangos` — list legal hierarchy/ranks (rangos)
 - `legalize_stats` — summary statistics per country (optional jurisdiction)
 - `legalize_account` — current API key account/usage/limits (does not count against quota)
-- `legalize_rotate_key` — rotate API key (dangerous; invalidates current key)
+- `legalize_rotate_key` — rotate API key (dangerous; invalidates current key). Disabled by default; enable with `LEGALIZE_ENABLE_DANGEROUS_TOOLS=1`.
 
 ## Run
 
@@ -45,6 +45,9 @@ export LEGALIZE_API_KEY="leg_..."   # or "Bearer leg_..."
 # export LEGALIZE_BASE_URL="https://legalize.dev"
 # export LEGALIZE_HTTP_RETRIES=2
 # export LEGALIZE_HTTP_TIMEOUT=30
+
+# optional (DANGEROUS): exposes `legalize_rotate_key`
+# export LEGALIZE_ENABLE_DANGEROUS_TOOLS=1
 
 python3 -m lawyer_mcp
 ```
