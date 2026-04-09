@@ -458,6 +458,44 @@ def _fetch_public_json(url: str, *, timeout_s: float = 30.0) -> Any:
         )
 
 
+# --- OpenAPI cache (public) ---
+
+# We keep a tiny in-process cache so agents can call `legalize_openapi_summary`
+# multiple times without re-downloading the spec each turn.
+_OPENAPI_CACHE: tuple[float, Any] | None = None
+
+
+def _openapi_cache_ttl_s() -> float:
+    """Seconds to cache /openapi.json in-process.
+
+    Set LEGALIZE_OPENAPI_TTL=0 to disable caching.
+    """
+
+    raw = os.environ.get("LEGALIZE_OPENAPI_TTL", "300").strip()
+    try:
+        ttl = float(raw)
+    except Exception:
+        ttl = 300.0
+    return max(0.0, ttl)
+
+
+def _get_openapi_spec() -> Any:
+    global _OPENAPI_CACHE
+
+    ttl = _openapi_cache_ttl_s()
+    now = time.time()
+
+    if ttl > 0 and _OPENAPI_CACHE is not None:
+        ts, spec = _OPENAPI_CACHE
+        if (now - ts) <= ttl:
+            return spec
+
+    spec = _fetch_public_json(_build_url("/openapi.json"))
+    if ttl > 0:
+        _OPENAPI_CACHE = (now, spec)
+    return spec
+
+
 def tool_openapi_summary() -> JSON:
     """Return a small summary of the Legalize.dev OpenAPI spec.
 
@@ -465,7 +503,7 @@ def tool_openapi_summary() -> JSON:
     available endpoints + required parameters.
     """
 
-    spec = _fetch_public_json(_build_url("/openapi.json"))
+    spec = _get_openapi_spec()
     info = (spec or {}).get("info") or {}
     paths = (spec or {}).get("paths") or {}
 
