@@ -18,6 +18,21 @@ This server expects:
 
 - `LEGALIZE_API_KEY` env var (either the raw `leg_...` token or the full `Bearer leg_...` value)
 
+## Tools (MCP)
+
+Minimal tools derived from `https://legalize.dev/openapi.json` (API v1):
+
+- `legalize_countries` — list supported countries
+- `legalize_jurisdictions` — list jurisdictions within a country
+- `legalize_laws` — search/list laws within a country
+- `legalize_law_meta` — lightweight law metadata
+- `legalize_law_get` — full law payload
+- `legalize_reforms` — list reforms/diffs for a law
+- `legalize_commits` — list git commits for a law
+- `legalize_law_at_commit` — fetch law content at a commit SHA
+- `legalize_rangos` — list legal hierarchy/ranks (rangos)
+- `legalize_stats` — summary statistics per country (optional jurisdiction)
+
 ## Run
 
 ```bash

@@ -15,6 +15,9 @@ from dataclasses import dataclass
 from typing import Any
 
 
+__version__ = "0.1.0"
+
+
 # Minimal MCP server over stdio (JSON-RPC).
 #
 # This mirrors the approach we used for peridot-mcp: keep dependencies at zero.
@@ -58,6 +61,14 @@ def _jsonrpc_error(id_: Any, code: int, message: str, data: Any | None = None) -
     return {"jsonrpc": "2.0", "id": id_, "error": err}
 
 
+class OperationalError(RuntimeError):
+    """A recoverable / user-facing error (missing key, upstream HTTP errors, network issues)."""
+
+    def __init__(self, message: str, *, data: Any | None = None):
+        super().__init__(message)
+        self.data = data
+
+
 def _readline() -> str | None:
     line = sys.stdin.readline()
     if not line:
@@ -73,7 +84,7 @@ def _write(obj: JSON) -> None:
 def _api_key() -> str:
     key = os.environ.get("LEGALIZE_API_KEY", "").strip()
     if not key:
-        raise RuntimeError("Missing LEGALIZE_API_KEY env var")
+        raise OperationalError("Missing LEGALIZE_API_KEY env var")
     return key
 
 
@@ -90,6 +101,11 @@ def _auth_header_value() -> str:
 
 
 def _http_get_json(path: str, query: dict[str, Any] | None = None) -> Any:
+    """GET JSON from Legalize.dev.
+
+    Raises OperationalError with structured data when possible.
+    """
+
     url = _build_url(path, query=query)
 
     req = urllib.request.Request(url)
@@ -99,7 +115,7 @@ def _http_get_json(path: str, query: dict[str, Any] | None = None) -> Any:
     #   description: Bearer token
     req.add_header("Authorization", _auth_header_value())
     req.add_header("Accept", "application/json")
-    req.add_header("User-Agent", "lawyer-mcp/0.1.0 (+https://github.com/pugafran/lawyer-mcp)")
+    req.add_header("User-Agent", f"lawyer-mcp/{__version__} (+https://github.com/pugafran/lawyer-mcp)")
 
     # Lightweight resilience: Legalize can rate-limit (401/429) or have transient upstream errors.
     max_retries = int(os.environ.get("LEGALIZE_HTTP_RETRIES", "2"))
@@ -114,6 +130,7 @@ def _http_get_json(path: str, query: dict[str, Any] | None = None) -> Any:
             return json.loads(raw) if raw.strip() else None
         except urllib.error.HTTPError as e:
             last_http_error = e
+
             # Retry on transient errors.
             if e.code in {429, 502, 503, 504} and attempt < max_retries:
                 retry_after = None
@@ -128,24 +145,46 @@ def _http_get_json(path: str, query: dict[str, Any] | None = None) -> Any:
                     except Exception:
                         sleep_s = 2.0
                 else:
-                    sleep_s = min(2.0 ** attempt, 10.0)
+                    sleep_s = min(2.0**attempt, 10.0)
 
                 time.sleep(sleep_s)
                 continue
 
-            body = ""
+            body_text = ""
             try:
-                body = e.read().decode("utf-8", errors="replace")
+                body_text = e.read().decode("utf-8", errors="replace")
             except Exception:
-                body = ""
-            raise RuntimeError(f"HTTP {e.code} for {url}: {body}".strip())
+                body_text = ""
+
+            body_json: Any | None = None
+            if body_text.strip():
+                try:
+                    body_json = json.loads(body_text)
+                except Exception:
+                    body_json = None
+
+            # Produce a clean message, and keep a structured payload for callers.
+            msg = f"HTTP {e.code} for {url}".strip()
+            if isinstance(body_json, dict) and body_json.get("detail"):
+                msg = msg + f": {body_json.get('detail')}"
+            elif body_text.strip():
+                msg = msg + f": {body_text.strip()}"
+
+            raise OperationalError(
+                msg,
+                data={
+                    "status": e.code,
+                    "url": url,
+                    "body": body_json if body_json is not None else body_text,
+                },
+            )
         except urllib.error.URLError as e:
-            raise RuntimeError(f"Network error for {url}: {e}")
+            raise OperationalError(f"Network error for {url}: {e}", data={"url": url})
 
     # Should be unreachable, but keep a guardrail.
     if last_http_error is not None:
-        raise RuntimeError(f"HTTP {last_http_error.code} for {url}")
-    raise RuntimeError(f"Request failed for {url}")
+        raise OperationalError(f"HTTP {last_http_error.code} for {url}", data={"status": last_http_error.code, "url": url})
+    raise OperationalError(f"Request failed for {url}", data={"url": url})
 
 
 def tool_countries() -> JSON:
@@ -440,13 +479,14 @@ def main() -> None:
                     data={"traceback": traceback.format_exc()},
                 )
             )
-        except RuntimeError as exc:
+        except OperationalError as exc:
             # Operational errors (missing API key, upstream HTTP errors, network issues).
             _write(
                 _jsonrpc_error(
                     id_,
                     -32000,
                     str(exc),
+                    data=getattr(exc, "data", None),
                 )
             )
         except Exception as exc:

@@ -64,6 +64,29 @@ class TestHttpClient(unittest.TestCase):
         self.assertEqual(m_urlopen.call_count, 2)
         m_sleep.assert_called()  # uses Retry-After=0 but still called
 
+    def test_http_get_json_raises_operational_error_with_data(self):
+        os.environ["LEGALIZE_BASE_URL"] = "https://example.test"
+        os.environ["LEGALIZE_HTTP_RETRIES"] = "0"
+
+        http_err = urllib.error.HTTPError(
+            url="https://example.test/api/v1/countries",
+            code=401,
+            msg="Unauthorized",
+            hdrs={},
+            fp=io.BytesIO(b"{\"detail\":\"invalid api key\"}"),
+        )
+
+        with mock.patch.object(urllib.request, "urlopen", side_effect=[http_err]):
+            with self.assertRaises(lawyer_mcp.OperationalError) as ctx:
+                lawyer_mcp._http_get_json("/api/v1/countries")
+
+        exc = ctx.exception
+        self.assertIn("HTTP 401", str(exc))
+        self.assertIsInstance(exc.data, dict)
+        self.assertEqual(exc.data.get("status"), 401)
+        self.assertIn("url", exc.data)
+        self.assertEqual(exc.data.get("body"), {"detail": "invalid api key"})
+
 
 if __name__ == "__main__":
     unittest.main()
