@@ -20,20 +20,35 @@ This server expects:
 
 ## Tools (MCP)
 
-Minimal tools derived from `https://legalize.dev/openapi.json` (API v1):
+Tools are derived from `https://legalize.dev/openapi.json`.
 
+### Toolset selection
+
+By default we expose a **full** read-only toolset. If you want the smallest useful surface area (to reduce model confusion), set:
+
+- `LEGALIZE_TOOLSET=minimal`
+
+**Minimal toolset includes:**
+
+- `legalize_openapi_summary` — public summary of the OpenAPI spec (no API key)
 - `legalize_countries` — list supported countries
 - `legalize_jurisdictions` — list jurisdictions within a country
 - `legalize_laws` — search/list laws within a country
 - `legalize_law_meta` — lightweight law metadata
 - `legalize_law_get` — full law payload
 - `legalize_reforms` — list reforms/diffs for a law
+
+**Full toolset additionally includes:**
+
 - `legalize_commits` — list git commits for a law
 - `legalize_law_at_commit` — fetch law content at a commit SHA
 - `legalize_rangos` — list legal hierarchy/ranks (rangos)
 - `legalize_stats` — summary statistics per country (optional jurisdiction)
 - `legalize_account` — current API key account/usage/limits (does not count against quota)
-- `legalize_rotate_key` — rotate API key (dangerous; invalidates current key). Disabled by default; enable with `LEGALIZE_ENABLE_DANGEROUS_TOOLS=1`.
+
+### Dangerous tool (opt-in)
+
+- `legalize_rotate_key` — rotate API key (invalidates current key). Disabled by default; enable with `LEGALIZE_ENABLE_DANGEROUS_TOOLS=1`.
 
 ## Run
 

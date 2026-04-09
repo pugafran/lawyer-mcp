@@ -401,137 +401,194 @@ def _dangerous_tools_enabled() -> bool:
     return v in {"1", "true", "yes", "on"}
 
 
-TOOLS: list[Tool] = [
-    Tool(
-        name="legalize_openapi_summary",
-        description="Public: summarize the Legalize.dev OpenAPI spec (endpoints, versions). No API key required.",
-        input_schema={"type": "object", "properties": {}, "additionalProperties": False},
-    ),
-    Tool(
-        name="legalize_countries",
-        description="List supported countries.",
-        input_schema={"type": "object", "properties": {}, "additionalProperties": False},
-    ),
-    Tool(
-        name="legalize_jurisdictions",
-        description="List jurisdictions within a country.",
-        input_schema={
-            "type": "object",
-            "properties": {"country": {"type": "string"}},
-            "required": ["country"],
-            "additionalProperties": False,
-        },
-    ),
-    Tool(
-        name="legalize_laws",
-        description="Search/list laws within a country.",
-        input_schema={
-            "type": "object",
-            "properties": {
-                "country": {"type": "string"},
-                "q": {"type": "string"},
-                "page": {"type": "integer", "default": 1, "minimum": 1},
-                "per_page": {"type": "integer", "default": 50, "minimum": 1, "maximum": 100},
-                "law_type": {"type": "string"},
-                "year": {"type": "integer"},
-                "status": {"type": "string"},
-                "jurisdiction": {"type": "string"},
-            },
-            "required": ["country"],
-            "additionalProperties": False,
-        },
-    ),
-    Tool(
-        name="legalize_law_at_commit",
-        description="Fetch the law content as it was at a specific git commit SHA.",
-        input_schema={
-            "type": "object",
-            "properties": {"country": {"type": "string"}, "law_id": {"type": "string"}, "sha": {"type": "string"}},
-            "required": ["country", "law_id", "sha"],
-            "additionalProperties": False,
-        },
-    ),
-    Tool(
-        name="legalize_rangos",
-        description="List the legal hierarchy/ranks (rangos) for a country.",
-        input_schema={
-            "type": "object",
-            "properties": {"country": {"type": "string"}},
-            "required": ["country"],
-            "additionalProperties": False,
-        },
-    ),
-    Tool(
-        name="legalize_stats",
-        description="Get summary statistics for a country (optionally filtered by jurisdiction).",
-        input_schema={
-            "type": "object",
-            "properties": {"country": {"type": "string"}, "jurisdiction": {"type": "string"}},
-            "required": ["country"],
-            "additionalProperties": False,
-        },
-    ),
-    Tool(
-        name="legalize_law_meta",
-        description="Get metadata for a law (lightweight endpoint).",
-        input_schema={
-            "type": "object",
-            "properties": {"country": {"type": "string"}, "law_id": {"type": "string"}},
-            "required": ["country", "law_id"],
-            "additionalProperties": False,
-        },
-    ),
-    Tool(
-        name="legalize_law_get",
-        description="Fetch a full law payload.",
-        input_schema={
-            "type": "object",
-            "properties": {"country": {"type": "string"}, "law_id": {"type": "string"}},
-            "required": ["country", "law_id"],
-            "additionalProperties": False,
-        },
-    ),
-    Tool(
-        name="legalize_reforms",
-        description="List reforms (diffs) for a law, newest-first; useful for change tracking.",
-        input_schema={
-            "type": "object",
-            "properties": {
-                "country": {"type": "string"},
-                "law_id": {"type": "string"},
-                "limit": {"type": "integer", "default": 100, "minimum": 1, "maximum": 1000},
-                "offset": {"type": "integer", "default": 0, "minimum": 0},
-            },
-            "required": ["country", "law_id"],
-            "additionalProperties": False,
-        },
-    ),
-    Tool(
-        name="legalize_commits",
-        description="List git commits for a law repository (lightweight history).",
-        input_schema={
-            "type": "object",
-            "properties": {"country": {"type": "string"}, "law_id": {"type": "string"}},
-            "required": ["country", "law_id"],
-            "additionalProperties": False,
-        },
-    ),
-    Tool(
-        name="legalize_account",
-        description="Get account usage/limits info for the current API key (does not count against quota).",
-        input_schema={"type": "object", "properties": {}, "additionalProperties": False},
-    ),
-]
+def _toolset() -> str:
+    """Choose which MCP tools to expose.
 
-# Opt-in tools with irreversible side effects.
-if _dangerous_tools_enabled():
-    TOOLS.append(
-        Tool(
-            name="legalize_rotate_key",
-            description="Rotate the current API key and return the new key (shown once).",
-            input_schema={"type": "object", "properties": {}, "additionalProperties": False},
-        )
-    )
+    Env var: LEGALIZE_TOOLSET
+      - "full" (default): expose all read-only tools + (optionally) dangerous tools
+      - "minimal": expose only the smallest useful subset for typical legal research flows
+
+    Rationale: some MCP hosts prefer very small tool surfaces to reduce model confusion.
+    """
+
+    v = os.environ.get("LEGALIZE_TOOLSET", "full").strip().lower()
+    if v in {"minimal", "min"}:
+        return "minimal"
+    return "full"
+
+
+# --- Tool definitions (shared) ---
+
+TOOL_OPENAPI_SUMMARY = Tool(
+    name="legalize_openapi_summary",
+    description="Public: summarize the Legalize.dev OpenAPI spec (endpoints, versions). No API key required.",
+    input_schema={"type": "object", "properties": {}, "additionalProperties": False},
+)
+
+TOOL_COUNTRIES = Tool(
+    name="legalize_countries",
+    description="List supported countries.",
+    input_schema={"type": "object", "properties": {}, "additionalProperties": False},
+)
+
+TOOL_JURISDICTIONS = Tool(
+    name="legalize_jurisdictions",
+    description="List jurisdictions within a country.",
+    input_schema={
+        "type": "object",
+        "properties": {"country": {"type": "string"}},
+        "required": ["country"],
+        "additionalProperties": False,
+    },
+)
+
+TOOL_LAWS = Tool(
+    name="legalize_laws",
+    description="Search/list laws within a country.",
+    input_schema={
+        "type": "object",
+        "properties": {
+            "country": {"type": "string"},
+            "q": {"type": "string"},
+            "page": {"type": "integer", "default": 1, "minimum": 1},
+            "per_page": {"type": "integer", "default": 50, "minimum": 1, "maximum": 100},
+            "law_type": {"type": "string"},
+            "year": {"type": "integer"},
+            "status": {"type": "string"},
+            "jurisdiction": {"type": "string"},
+        },
+        "required": ["country"],
+        "additionalProperties": False,
+    },
+)
+
+TOOL_LAW_META = Tool(
+    name="legalize_law_meta",
+    description="Get metadata for a law (lightweight endpoint).",
+    input_schema={
+        "type": "object",
+        "properties": {"country": {"type": "string"}, "law_id": {"type": "string"}},
+        "required": ["country", "law_id"],
+        "additionalProperties": False,
+    },
+)
+
+TOOL_LAW_GET = Tool(
+    name="legalize_law_get",
+    description="Fetch a full law payload.",
+    input_schema={
+        "type": "object",
+        "properties": {"country": {"type": "string"}, "law_id": {"type": "string"}},
+        "required": ["country", "law_id"],
+        "additionalProperties": False,
+    },
+)
+
+TOOL_REFORMS = Tool(
+    name="legalize_reforms",
+    description="List reforms (diffs) for a law, newest-first; useful for change tracking.",
+    input_schema={
+        "type": "object",
+        "properties": {
+            "country": {"type": "string"},
+            "law_id": {"type": "string"},
+            "limit": {"type": "integer", "default": 100, "minimum": 1, "maximum": 1000},
+            "offset": {"type": "integer", "default": 0, "minimum": 0},
+        },
+        "required": ["country", "law_id"],
+        "additionalProperties": False,
+    },
+)
+
+TOOL_COMMITS = Tool(
+    name="legalize_commits",
+    description="List git commits for a law repository (lightweight history).",
+    input_schema={
+        "type": "object",
+        "properties": {"country": {"type": "string"}, "law_id": {"type": "string"}},
+        "required": ["country", "law_id"],
+        "additionalProperties": False,
+    },
+)
+
+TOOL_LAW_AT_COMMIT = Tool(
+    name="legalize_law_at_commit",
+    description="Fetch the law content as it was at a specific git commit SHA.",
+    input_schema={
+        "type": "object",
+        "properties": {"country": {"type": "string"}, "law_id": {"type": "string"}, "sha": {"type": "string"}},
+        "required": ["country", "law_id", "sha"],
+        "additionalProperties": False,
+    },
+)
+
+TOOL_RANGOS = Tool(
+    name="legalize_rangos",
+    description="List the legal hierarchy/ranks (rangos) for a country.",
+    input_schema={
+        "type": "object",
+        "properties": {"country": {"type": "string"}},
+        "required": ["country"],
+        "additionalProperties": False,
+    },
+)
+
+TOOL_STATS = Tool(
+    name="legalize_stats",
+    description="Get summary statistics for a country (optionally filtered by jurisdiction).",
+    input_schema={
+        "type": "object",
+        "properties": {"country": {"type": "string"}, "jurisdiction": {"type": "string"}},
+        "required": ["country"],
+        "additionalProperties": False,
+    },
+)
+
+TOOL_ACCOUNT = Tool(
+    name="legalize_account",
+    description="Get account usage/limits info for the current API key (does not count against quota).",
+    input_schema={"type": "object", "properties": {}, "additionalProperties": False},
+)
+
+
+def _build_tools() -> list[Tool]:
+    toolset = _toolset()
+
+    # Minimal, high-signal tool surface.
+    minimal: list[Tool] = [
+        TOOL_OPENAPI_SUMMARY,
+        TOOL_COUNTRIES,
+        TOOL_JURISDICTIONS,
+        TOOL_LAWS,
+        TOOL_LAW_META,
+        TOOL_LAW_GET,
+        TOOL_REFORMS,
+    ]
+
+    full: list[Tool] = minimal + [
+        TOOL_COMMITS,
+        TOOL_LAW_AT_COMMIT,
+        TOOL_RANGOS,
+        TOOL_STATS,
+        TOOL_ACCOUNT,
+    ]
+
+    tools = minimal if toolset == "minimal" else full
+
+    # Opt-in tools with irreversible side effects.
+    if _dangerous_tools_enabled():
+        tools = tools + [
+            Tool(
+                name="legalize_rotate_key",
+                description="Rotate the current API key and return the new key (shown once).",
+                input_schema={"type": "object", "properties": {}, "additionalProperties": False},
+            )
+        ]
+
+    return tools
+
+
+TOOLS: list[Tool] = _build_tools()
 
 
 def _handle_initialize(_params: JSON) -> JSON:
