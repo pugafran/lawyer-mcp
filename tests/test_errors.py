@@ -48,6 +48,40 @@ class TestErrors(unittest.TestCase):
                     proc.kill()
                     proc.communicate(timeout=1)
 
+    def test_tools_call_rejects_unknown_arguments_when_additional_properties_false(self):
+        proc = subprocess.Popen(
+            [sys.executable, "-m", "lawyer_mcp"],
+            stdin=subprocess.PIPE,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+            env={"LEGALIZE_API_KEY": "test"},
+        )
+        try:
+            _ = send(proc, {"jsonrpc": "2.0", "id": 1, "method": "initialize", "params": {}})
+            resp = send(
+                proc,
+                {
+                    "jsonrpc": "2.0",
+                    "id": 2,
+                    "method": "tools/call",
+                    "params": {
+                        "name": "legalize_countries",
+                        "arguments": {"unexpected": 123},
+                    },
+                },
+            )
+            self.assertIn("error", resp)
+            self.assertEqual(resp["error"]["code"], -32602)
+            self.assertIn("Unknown argument", resp["error"]["message"])
+        finally:
+            if proc.poll() is None:
+                proc.terminate()
+                try:
+                    proc.communicate(timeout=1)
+                except Exception:
+                    proc.kill()
+                    proc.communicate(timeout=1)
+
     def test_missing_api_key_is_operational_error(self):
         # Ensure the tool call path does not crash the process: should return -32000.
         proc = subprocess.Popen(

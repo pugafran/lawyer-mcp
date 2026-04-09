@@ -487,9 +487,70 @@ def _handle_tools_list() -> JSON:
     }
 
 
+def _tool_by_name(name: str) -> Tool | None:
+    for t in TOOLS:
+        if t.name == name:
+            return t
+    return None
+
+
+def _validate_args(input_schema: JSON, args: Any) -> JSON:
+    if not isinstance(args, dict):
+        raise TypeError("arguments must be an object")
+
+    props: dict[str, Any] = dict(input_schema.get("properties") or {})
+    required: list[str] = list(input_schema.get("required") or [])
+    additional = input_schema.get("additionalProperties", True)
+
+    if additional is False:
+        unknown = [k for k in args.keys() if k not in props]
+        if unknown:
+            raise ValueError(f"Unknown argument(s): {', '.join(sorted(unknown))}")
+
+    for k in required:
+        if k not in args:
+            raise ValueError(f"Missing required argument: {k}")
+
+    out: JSON = {}
+    for k, v in args.items():
+        schema = props.get(k)
+        if not schema:
+            # allowed only when additionalProperties=True
+            out[k] = v
+            continue
+
+        t = schema.get("type")
+        if t == "string":
+            if v is None:
+                raise TypeError(f"{k} must be a string")
+            out[k] = str(v)
+        elif t == "integer":
+            if v is None:
+                raise TypeError(f"{k} must be an integer")
+            try:
+                out[k] = int(v)
+            except Exception:
+                raise TypeError(f"{k} must be an integer")
+        elif t == "object":
+            if not isinstance(v, dict):
+                raise TypeError(f"{k} must be an object")
+            out[k] = v
+        else:
+            # Best-effort passthrough for unsupported schema constructs.
+            out[k] = v
+
+    return out
+
+
 def _handle_tools_call(params: JSON) -> JSON:
-    name = params.get("name")
-    args = params.get("arguments") or {}
+    name = str(params.get("name"))
+    args_raw = params.get("arguments") or {}
+
+    tool = _tool_by_name(name)
+    if tool is None:
+        raise ValueError(f"Unknown tool: {name}")
+
+    args = _validate_args(tool.input_schema, args_raw)
 
     def _opt_str(k: str) -> str | None:
         return str(args[k]) if args.get(k) is not None else None
@@ -510,7 +571,11 @@ def _handle_tools_call(params: JSON) -> JSON:
             status=_opt_str("status"),
             jurisdiction=_opt_str("jurisdiction"),
         ),
-        "legalize_law_at_commit": lambda: tool_law_at_commit(str(args["country"]), str(args["law_id"]), str(args["sha"])),
+        "legalize_law_at_commit": lambda: tool_law_at_commit(
+            str(args["country"]),
+            str(args["law_id"]),
+            str(args["sha"]),
+        ),
         "legalize_rangos": lambda: tool_rangos(str(args["country"])),
         "legalize_stats": lambda: tool_stats(str(args["country"]), jurisdiction=_opt_str("jurisdiction")),
         "legalize_law_meta": lambda: tool_law_meta(str(args["country"]), str(args["law_id"])),
@@ -526,7 +591,7 @@ def _handle_tools_call(params: JSON) -> JSON:
         "legalize_rotate_key": lambda: tool_rotate_key(),
     }
 
-    fn = dispatch.get(str(name))
+    fn = dispatch.get(name)
     if fn is None:
         raise ValueError(f"Unknown tool: {name}")
 
