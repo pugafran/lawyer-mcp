@@ -51,6 +51,67 @@ By default we expose a **full** read-only toolset. If you want the smallest usef
 
 - `legalize_rotate_key` — rotate API key (invalidates current key). Disabled by default; enable with `LEGALIZE_ENABLE_DANGEROUS_TOOLS=1`.
 
+## Install
+
+For now this is a single-file Python module (no external dependencies).
+
+### Option A: run from source (recommended)
+
+```bash
+git clone https://github.com/pugafran/lawyer-mcp.git
+cd lawyer-mcp
+
+# required
+export LEGALIZE_API_KEY="leg_..."   # or "Bearer leg_..."
+
+python3 -m lawyer_mcp
+```
+
+### Option B: pipx / pip (if you have pip available)
+
+```bash
+pipx install git+https://github.com/pugafran/lawyer-mcp.git
+# or: python -m pip install git+https://github.com/pugafran/lawyer-mcp.git
+
+export LEGALIZE_API_KEY="leg_..."
+lawyer-mcp
+```
+
+## Configure in Claude Desktop (MCP)
+
+1) Install the server (see Install above).
+2) Open Claude Desktop → **Settings** → **Developer** → **Edit MCP config**.
+3) Add a server entry like this:
+
+```json
+{
+  "mcpServers": {
+    "lawyer": {
+      "command": "python3",
+      "args": ["-m", "lawyer_mcp"],
+      "env": {
+        "LEGALIZE_API_KEY": "leg_...",
+        "LEGALIZE_TOOLSET": "minimal"
+      }
+    }
+  }
+}
+```
+
+Restart Claude Desktop. You should then see the `legalize_*` tools available.
+
+## Configure in OpenAI Codex / IDEs
+
+Codex support depends on the client you are using (Codex CLI vs an IDE with MCP support).
+
+If your Codex/IDE supports MCP servers via a JSON config, use the same command/env as above:
+
+- command: `python3`
+- args: `-m lawyer_mcp`
+- env: `LEGALIZE_API_KEY=...`
+
+If you tell me which “Codex” you mean (Codex CLI, VS Code extension, Cursor, etc.), I’ll add an exact, copy/paste config snippet for that client.
+
 ## Run
 
 ```bash
