@@ -12,9 +12,11 @@ Work in progress.
 - OpenAPI spec: https://legalize.dev/openapi.json
 
 ## Auth
-Legalize.dev uses an API key (see `ApiKeyAuth` in the OpenAPI spec). This server expects:
+Legalize.dev uses a bearer token in the `Authorization` header (see `components.securitySchemes.ApiKeyAuth` in the OpenAPI spec).
 
-- `LEGALIZE_API_KEY` env var
+This server expects:
+
+- `LEGALIZE_API_KEY` env var (either the raw `leg_...` token or the full `Bearer leg_...` value)
 
 ## Run (planned)
 

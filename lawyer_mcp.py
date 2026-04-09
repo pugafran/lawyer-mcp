@@ -61,15 +61,29 @@ def _api_key() -> str:
     return key
 
 
+def _auth_header_value() -> str:
+    """Legalize.dev expects: Authorization: Bearer leg_xxx
+
+    We accept either a raw `leg_...` token or a full `Bearer ...` value.
+    """
+
+    key = _api_key()
+    if key.lower().startswith("bearer "):
+        return key
+    return f"Bearer {key}"
+
+
 def _http_get_json(path: str, query: dict[str, Any] | None = None) -> Any:
     url = urllib.parse.urljoin(LEGALIZE_BASE_URL, path)
     if query:
         url = url + "?" + urllib.parse.urlencode({k: v for k, v in query.items() if v is not None})
 
     req = urllib.request.Request(url)
-    # OpenAPI uses ApiKeyAuth; common pattern is X-API-Key. If it differs, we will
-    # adjust once we inspect components.securitySchemes in the spec.
-    req.add_header("X-API-Key", _api_key())
+    # OpenAPI securitySchemes.ApiKeyAuth:
+    #   in: header
+    #   name: Authorization
+    #   description: Bearer token
+    req.add_header("Authorization", _auth_header_value())
     req.add_header("Accept", "application/json")
 
     try:
@@ -104,6 +118,19 @@ def tool_law_meta(country: str, law_id: str) -> JSON:
 
 def tool_law_get(country: str, law_id: str) -> JSON:
     return {"country": country, "law_id": law_id, "law": _http_get_json(f"/api/v1/{country}/laws/{law_id}")}
+
+
+def tool_reforms(country: str, law_id: str, limit: int = 100, offset: int = 0) -> JSON:
+    data = _http_get_json(
+        f"/api/v1/{country}/laws/{law_id}/reforms",
+        query={"limit": limit, "offset": offset},
+    )
+    return {"country": country, "law_id": law_id, "data": data}
+
+
+def tool_commits(country: str, law_id: str) -> JSON:
+    data = _http_get_json(f"/api/v1/{country}/laws/{law_id}/commits")
+    return {"country": country, "law_id": law_id, "data": data}
 
 
 TOOLS: list[Tool] = [
@@ -158,6 +185,31 @@ TOOLS: list[Tool] = [
             "additionalProperties": False,
         },
     ),
+    Tool(
+        name="legalize_reforms",
+        description="List reforms (diffs) for a law, newest-first; useful for change tracking.",
+        input_schema={
+            "type": "object",
+            "properties": {
+                "country": {"type": "string"},
+                "law_id": {"type": "string"},
+                "limit": {"type": "integer", "default": 100, "minimum": 1, "maximum": 1000},
+                "offset": {"type": "integer", "default": 0, "minimum": 0},
+            },
+            "required": ["country", "law_id"],
+            "additionalProperties": False,
+        },
+    ),
+    Tool(
+        name="legalize_commits",
+        description="List git commits for a law repository (lightweight history).",
+        input_schema={
+            "type": "object",
+            "properties": {"country": {"type": "string"}, "law_id": {"type": "string"}},
+            "required": ["country", "law_id"],
+            "additionalProperties": False,
+        },
+    ),
 ]
 
 
@@ -204,6 +256,15 @@ def _handle_tools_call(params: JSON) -> JSON:
         payload = tool_law_meta(str(args["country"]), str(args["law_id"]))
     elif name == "legalize_law_get":
         payload = tool_law_get(str(args["country"]), str(args["law_id"]))
+    elif name == "legalize_reforms":
+        payload = tool_reforms(
+            str(args["country"]),
+            str(args["law_id"]),
+            limit=int(args.get("limit", 100)),
+            offset=int(args.get("offset", 0)),
+        )
+    elif name == "legalize_commits":
+        payload = tool_commits(str(args["country"]), str(args["law_id"]))
     else:
         raise ValueError(f"Unknown tool: {name}")
 
