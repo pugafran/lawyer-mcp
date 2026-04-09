@@ -1,0 +1,15 @@
+[project]
+name = "lawyer-mcp"
+version = "0.1.0"
+description = "MCP server for Legalize.dev: AI tools to query and understand legal frameworks across countries"
+requires-python = ">=3.11"
+dependencies = []
+
+[project.scripts]
+lawyer-mcp = "lawyer_mcp:main"
+
+[tool.setuptools]
+py-modules = ["lawyer_mcp"]
+
+[project.optional-dependencies]
+dev = ["pytest"]
