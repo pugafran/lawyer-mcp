@@ -32,6 +32,8 @@ Minimal tools derived from `https://legalize.dev/openapi.json` (API v1):
 - `legalize_law_at_commit` — fetch law content at a commit SHA
 - `legalize_rangos` — list legal hierarchy/ranks (rangos)
 - `legalize_stats` — summary statistics per country (optional jurisdiction)
+- `legalize_account` — current API key account/usage/limits (does not count against quota)
+- `legalize_rotate_key` — rotate API key (dangerous; invalidates current key)
 
 ## Run
 

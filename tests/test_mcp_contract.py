@@ -28,6 +28,10 @@ class TestMcpContract(unittest.TestCase):
         try:
             resp = send(proc, {"jsonrpc": "2.0", "id": 1, "method": "initialize", "params": {}})
             self.assertEqual(resp["result"]["serverInfo"]["name"], "lawyer-mcp")
+            # serverInfo.version should reflect the package version.
+            import lawyer_mcp as lm
+
+            self.assertEqual(resp["result"]["serverInfo"]["version"], lm.__version__)
 
             tools = send(proc, {"jsonrpc": "2.0", "id": 2, "method": "tools/list"})
             names = {t["name"] for t in tools["result"]["tools"]}

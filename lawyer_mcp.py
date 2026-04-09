@@ -17,6 +17,8 @@ from typing import Any
 
 __version__ = "0.1.0"
 
+# Note: Keep __version__ as the single source of truth (also used in MCP initialize + User-Agent).
+
 
 # Minimal MCP server over stdio (JSON-RPC).
 #
@@ -469,7 +471,7 @@ def _handle_initialize(_params: JSON) -> JSON:
         "capabilities": {"tools": {"listChanged": False}},
         "serverInfo": {
             "name": "lawyer-mcp",
-            "version": "0.1.0",
+            "version": __version__,
             "description": (
                 "AI-callable tools for querying Legalize.dev (open legislation as code) to retrieve structured law data by country, "
                 "jurisdiction and law id."
