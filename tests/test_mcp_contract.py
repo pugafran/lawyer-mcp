@@ -36,6 +36,9 @@ class TestMcpContract(unittest.TestCase):
             self.assertIn("legalize_law_meta", names)
             self.assertIn("legalize_reforms", names)
             self.assertIn("legalize_commits", names)
+            self.assertIn("legalize_law_at_commit", names)
+            self.assertIn("legalize_rangos", names)
+            self.assertIn("legalize_stats", names)
         finally:
             if proc.poll() is None:
                 proc.terminate()

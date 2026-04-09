@@ -91,7 +91,9 @@ def _http_get_json(path: str, query: dict[str, Any] | None = None) -> Any:
             raw = resp.read().decode("utf-8")
     except urllib.error.HTTPError as e:
         body = e.read().decode("utf-8", errors="replace") if hasattr(e, "read") else ""
-        raise RuntimeError(f"HTTP {e.code}: {body}".strip())
+        raise RuntimeError(f"HTTP {e.code} for {url}: {body}".strip())
+    except urllib.error.URLError as e:
+        raise RuntimeError(f"Network error for {url}: {e}")
 
     return json.loads(raw) if raw.strip() else None
 
@@ -104,10 +106,27 @@ def tool_jurisdictions(country: str) -> JSON:
     return {"country": country, "jurisdictions": _http_get_json(f"/api/v1/{country}/jurisdictions")}
 
 
-def tool_laws(country: str, q: str | None = None, page: int = 1, per_page: int = 50, jurisdiction: str | None = None) -> JSON:
+def tool_laws(
+    country: str,
+    q: str | None = None,
+    page: int = 1,
+    per_page: int = 50,
+    law_type: str | None = None,
+    year: int | None = None,
+    status: str | None = None,
+    jurisdiction: str | None = None,
+) -> JSON:
     data = _http_get_json(
         f"/api/v1/{country}/laws",
-        query={"q": q, "page": page, "per_page": per_page, "jurisdiction": jurisdiction},
+        query={
+            "q": q,
+            "page": page,
+            "per_page": per_page,
+            "law_type": law_type,
+            "year": year,
+            "status": status,
+            "jurisdiction": jurisdiction,
+        },
     )
     return {"country": country, "data": data}
 
@@ -131,6 +150,24 @@ def tool_reforms(country: str, law_id: str, limit: int = 100, offset: int = 0) -
 def tool_commits(country: str, law_id: str) -> JSON:
     data = _http_get_json(f"/api/v1/{country}/laws/{law_id}/commits")
     return {"country": country, "law_id": law_id, "data": data}
+
+
+def tool_law_at_commit(country: str, law_id: str, sha: str) -> JSON:
+    data = _http_get_json(f"/api/v1/{country}/laws/{law_id}/at/{sha}")
+    return {"country": country, "law_id": law_id, "sha": sha, "law": data}
+
+
+def tool_rangos(country: str) -> JSON:
+    data = _http_get_json(f"/api/v1/{country}/rangos")
+    return {"country": country, "rangos": data}
+
+
+def tool_stats(country: str, jurisdiction: str | None = None) -> JSON:
+    data = _http_get_json(
+        f"/api/v1/{country}/stats",
+        query={"jurisdiction": jurisdiction},
+    )
+    return {"country": country, "jurisdiction": jurisdiction, "stats": data}
 
 
 TOOLS: list[Tool] = [
@@ -159,8 +196,41 @@ TOOLS: list[Tool] = [
                 "q": {"type": "string"},
                 "page": {"type": "integer", "default": 1, "minimum": 1},
                 "per_page": {"type": "integer", "default": 50, "minimum": 1, "maximum": 100},
+                "law_type": {"type": "string"},
+                "year": {"type": "integer"},
+                "status": {"type": "string"},
                 "jurisdiction": {"type": "string"},
             },
+            "required": ["country"],
+            "additionalProperties": False,
+        },
+    ),
+    Tool(
+        name="legalize_law_at_commit",
+        description="Fetch the law content as it was at a specific git commit SHA.",
+        input_schema={
+            "type": "object",
+            "properties": {"country": {"type": "string"}, "law_id": {"type": "string"}, "sha": {"type": "string"}},
+            "required": ["country", "law_id", "sha"],
+            "additionalProperties": False,
+        },
+    ),
+    Tool(
+        name="legalize_rangos",
+        description="List the legal hierarchy/ranks (rangos) for a country.",
+        input_schema={
+            "type": "object",
+            "properties": {"country": {"type": "string"}},
+            "required": ["country"],
+            "additionalProperties": False,
+        },
+    ),
+    Tool(
+        name="legalize_stats",
+        description="Get summary statistics for a country (optionally filtered by jurisdiction).",
+        input_schema={
+            "type": "object",
+            "properties": {"country": {"type": "string"}, "jurisdiction": {"type": "string"}},
             "required": ["country"],
             "additionalProperties": False,
         },
@@ -250,6 +320,18 @@ def _handle_tools_call(params: JSON) -> JSON:
             q=(str(args["q"]) if args.get("q") is not None else None),
             page=int(args.get("page", 1)),
             per_page=int(args.get("per_page", 50)),
+            law_type=(str(args["law_type"]) if args.get("law_type") is not None else None),
+            year=(int(args["year"]) if args.get("year") is not None else None),
+            status=(str(args["status"]) if args.get("status") is not None else None),
+            jurisdiction=(str(args["jurisdiction"]) if args.get("jurisdiction") is not None else None),
+        )
+    elif name == "legalize_law_at_commit":
+        payload = tool_law_at_commit(str(args["country"]), str(args["law_id"]), str(args["sha"]))
+    elif name == "legalize_rangos":
+        payload = tool_rangos(str(args["country"]))
+    elif name == "legalize_stats":
+        payload = tool_stats(
+            str(args["country"]),
             jurisdiction=(str(args["jurisdiction"]) if args.get("jurisdiction") is not None else None),
         )
     elif name == "legalize_law_meta":
