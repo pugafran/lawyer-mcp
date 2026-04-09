@@ -586,13 +586,13 @@ TOOL_LAWS = Tool(
         "type": "object",
         "properties": {
             "country": {"type": "string"},
-            "q": {"type": "string"},
+            "q": {"anyOf": [{"type": "string"}, {"type": "null"}]},
             "page": {"type": "integer", "default": 1, "minimum": 1},
             "per_page": {"type": "integer", "default": 50, "minimum": 1, "maximum": 100},
-            "law_type": {"type": "string"},
-            "year": {"type": "integer"},
-            "status": {"type": "string"},
-            "jurisdiction": {"type": "string"},
+            "law_type": {"anyOf": [{"type": "string"}, {"type": "null"}]},
+            "year": {"anyOf": [{"type": "integer"}, {"type": "null"}]},
+            "status": {"anyOf": [{"type": "string"}, {"type": "null"}]},
+            "jurisdiction": {"anyOf": [{"type": "string"}, {"type": "null"}]},
         },
         "required": ["country"],
         "additionalProperties": False,
@@ -609,14 +609,14 @@ TOOL_LAWS_ALL = Tool(
         "type": "object",
         "properties": {
             "country": {"type": "string"},
-            "q": {"type": "string"},
+            "q": {"anyOf": [{"type": "string"}, {"type": "null"}]},
             "per_page": {"type": "integer", "default": 100, "minimum": 1, "maximum": 100},
             "max_pages": {"type": "integer", "default": 5, "minimum": 1, "maximum": 50},
             "start_page": {"type": "integer", "default": 1, "minimum": 1},
-            "law_type": {"type": "string"},
-            "year": {"type": "integer"},
-            "status": {"type": "string"},
-            "jurisdiction": {"type": "string"},
+            "law_type": {"anyOf": [{"type": "string"}, {"type": "null"}]},
+            "year": {"anyOf": [{"type": "integer"}, {"type": "null"}]},
+            "status": {"anyOf": [{"type": "string"}, {"type": "null"}]},
+            "jurisdiction": {"anyOf": [{"type": "string"}, {"type": "null"}]},
         },
         "required": ["country"],
         "additionalProperties": False,
@@ -833,6 +833,30 @@ def _validate_args(input_schema: JSON, args: Any) -> JSON:
         if k not in args and isinstance(schema, dict) and "default" in schema:
             out[k] = schema.get("default")
 
+    def _normalize_schema(s: dict[str, Any]) -> tuple[dict[str, Any], bool]:
+        """Return (schema, nullable).
+
+        OpenAPI emits `anyOf: [{type: X}, {type: null}]` for optional query params.
+        We treat that as `type: X` with nullable=True.
+        """
+
+        if not isinstance(s, dict):
+            return {}, False
+
+        any_of = s.get("anyOf")
+        if isinstance(any_of, list) and any_of:
+            nullable = any(isinstance(x, dict) and x.get("type") == "null" for x in any_of)
+            non_null = [x for x in any_of if isinstance(x, dict) and x.get("type") != "null"]
+            if len(non_null) == 1:
+                merged = dict(non_null[0])
+                # carry common constraints/defaults from the parent schema
+                for key in ("default", "enum", "minimum", "maximum"):
+                    if key in s and key not in merged:
+                        merged[key] = s[key]
+                return merged, nullable
+
+        return s, False
+
     for k, v in args.items():
         schema = props.get(k)
         if not schema:
@@ -840,24 +864,33 @@ def _validate_args(input_schema: JSON, args: Any) -> JSON:
             out[k] = v
             continue
 
-        t = schema.get("type")
-        if t == "string":
-            if v is None:
+        schema_norm, nullable = _normalize_schema(schema)
+        t = schema_norm.get("type")
+
+        if v is None:
+            if nullable:
+                out[k] = None
+                continue
+            if t == "string":
                 raise TypeError(f"{k} must be a string")
+            if t == "integer":
+                raise TypeError(f"{k} must be an integer")
+            # Unknown type: allow None only if schema explicitly supports it.
+            raise TypeError(f"{k} must not be null")
+
+        if t == "string":
             sv = str(v)
-            enum = schema.get("enum")
+            enum = schema_norm.get("enum")
             if isinstance(enum, list) and enum and sv not in enum:
                 raise ValueError(f"{k} must be one of: {', '.join(map(str, enum))}")
             out[k] = sv
         elif t == "integer":
-            if v is None:
-                raise TypeError(f"{k} must be an integer")
             try:
                 iv = int(v)
             except Exception:
                 raise TypeError(f"{k} must be an integer")
-            min_v = schema.get("minimum")
-            max_v = schema.get("maximum")
+            min_v = schema_norm.get("minimum")
+            max_v = schema_norm.get("maximum")
             if min_v is not None and iv < int(min_v):
                 raise ValueError(f"{k} must be >= {min_v}")
             if max_v is not None and iv > int(max_v):
