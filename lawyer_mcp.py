@@ -334,6 +334,54 @@ def tool_account() -> JSON:
     return {"account": _http_get_json("/api/account")}
 
 
+def _fetch_public_json(url: str, *, timeout_s: float = 30.0) -> Any:
+    """Fetch JSON from a public (no-auth) endpoint."""
+
+    req = urllib.request.Request(url, method="GET")
+    req.add_header("Accept", "application/json")
+    req.add_header("User-Agent", f"lawyer-mcp/{__version__} (+https://github.com/pugafran/lawyer-mcp)")
+
+    with urllib.request.urlopen(req, timeout=timeout_s) as resp:
+        raw = resp.read().decode("utf-8")
+
+    if not raw.strip():
+        return None
+
+    try:
+        return json.loads(raw)
+    except json.JSONDecodeError as e:
+        snippet = raw.strip()
+        if len(snippet) > 500:
+            snippet = snippet[:500] + "…"
+        raise OperationalError(
+            f"Invalid JSON response for {url}: {e}",
+            data={"url": url, "body": snippet},
+        )
+
+
+def tool_openapi_summary() -> JSON:
+    """Return a small summary of the Legalize.dev OpenAPI spec.
+
+    This tool is intentionally public (no API key required) and helps agents discover
+    available endpoints + required parameters.
+    """
+
+    spec = _fetch_public_json(_build_url("/openapi.json"))
+    info = (spec or {}).get("info") or {}
+    paths = (spec or {}).get("paths") or {}
+
+    api_paths = sorted([p for p in paths.keys() if p.startswith("/api/") or p.startswith("/api/v1/")])
+
+    return {
+        "openapi": {
+            "title": info.get("title"),
+            "version": info.get("version"),
+            "total_paths": len(paths),
+            "api_paths": api_paths,
+        }
+    }
+
+
 def tool_rotate_key() -> JSON:
     """Rotate the caller's API key and return the new one.
 
@@ -354,6 +402,11 @@ def _dangerous_tools_enabled() -> bool:
 
 
 TOOLS: list[Tool] = [
+    Tool(
+        name="legalize_openapi_summary",
+        description="Public: summarize the Legalize.dev OpenAPI spec (endpoints, versions). No API key required.",
+        input_schema={"type": "object", "properties": {}, "additionalProperties": False},
+    ),
     Tool(
         name="legalize_countries",
         description="List supported countries.",
@@ -604,6 +657,7 @@ def _handle_tools_call(params: JSON) -> JSON:
         return int(args[k]) if args.get(k) is not None else None
 
     dispatch: dict[str, Any] = {
+        "legalize_openapi_summary": lambda: tool_openapi_summary(),
         "legalize_countries": lambda: tool_countries(),
         "legalize_jurisdictions": lambda: tool_jurisdictions(str(args["country"])),
         "legalize_laws": lambda: tool_laws(
