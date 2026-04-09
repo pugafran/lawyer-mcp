@@ -33,7 +33,8 @@ By default we expose a **full** read-only toolset. If you want the smallest usef
 - `legalize_openapi_summary` — public summary of the OpenAPI spec (no API key)
 - `legalize_countries` — list supported countries
 - `legalize_jurisdictions` — list jurisdictions within a country
-- `legalize_laws` — search/list laws within a country
+- `legalize_laws` — search/list laws within a country (single page)
+- `legalize_laws_all` — same, but auto-paginates (best-effort flattening)
 - `legalize_law_meta` — lightweight law metadata
 - `legalize_law_get` — full law payload
 - `legalize_reforms` — list reforms/diffs for a law

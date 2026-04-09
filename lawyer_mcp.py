@@ -294,6 +294,105 @@ def tool_law_get(country: str, law_id: str) -> JSON:
     return {"country": country, "law_id": law_id, "law": _http_get_json(f"/api/v1/{country}/laws/{law_id}")}
 
 
+def _extract_items(payload: Any) -> list[Any] | None:
+    """Best-effort extraction of item arrays from unknown API response shapes."""
+
+    if payload is None:
+        return []
+
+    if isinstance(payload, list):
+        return payload
+
+    if isinstance(payload, dict):
+        for k in ("items", "data", "results"):
+            v = payload.get(k)
+            if isinstance(v, list):
+                return v
+
+    return None
+
+
+def tool_laws_all(
+    country: str,
+    q: str | None = None,
+    per_page: int = 100,
+    max_pages: int = 5,
+    start_page: int = 1,
+    law_type: str | None = None,
+    year: int | None = None,
+    status: str | None = None,
+    jurisdiction: str | None = None,
+) -> JSON:
+    """Fetch multiple pages from /api/v1/{country}/laws.
+
+    OpenAPI only specifies the query params, not the response shape, so we:
+    - return raw page payloads (always)
+    - additionally try to provide a flattened "items" list when possible
+
+    Stops when:
+    - extracted items list is empty (when we can extract items)
+    - page returns fewer than per_page (when we can extract items)
+    - max_pages is reached
+    """
+
+    pages: list[Any] = []
+    flat: list[Any] = []
+
+    page = start_page
+    for _ in range(max_pages):
+        resp = _http_get_json(
+            f"/api/v1/{country}/laws",
+            query={
+                "q": q,
+                "page": page,
+                "per_page": per_page,
+                "law_type": law_type,
+                "year": year,
+                "status": status,
+                "jurisdiction": jurisdiction,
+            },
+        )
+
+        pages.append(resp)
+
+        items = _extract_items(resp)
+        if items is None:
+            # Unknown response shape; caller can inspect raw pages.
+            page += 1
+            continue
+
+        if not items:
+            break
+
+        flat.extend(items)
+
+        if len(items) < per_page:
+            break
+
+        page += 1
+
+    out: JSON = {
+        "country": country,
+        "query": {
+            "q": q,
+            "per_page": per_page,
+            "max_pages": max_pages,
+            "start_page": start_page,
+            "law_type": law_type,
+            "year": year,
+            "status": status,
+            "jurisdiction": jurisdiction,
+        },
+        "pages": pages,
+    }
+
+    if flat:
+        out["items"] = flat
+        out["items_count"] = len(flat)
+
+    return out
+
+
 def tool_reforms(country: str, law_id: str, limit: int = 100, offset: int = 0) -> JSON:
     data = _http_get_json(
         f"/api/v1/{country}/laws/{law_id}/reforms",
@@ -444,7 +543,7 @@ TOOL_JURISDICTIONS = Tool(
 
 TOOL_LAWS = Tool(
     name="legalize_laws",
-    description="Search/list laws within a country.",
+    description="Search/list laws within a country (single page).",
     input_schema={
         "type": "object",
         "properties": {
@@ -452,6 +551,30 @@ TOOL_LAWS = Tool(
             "q": {"type": "string"},
             "page": {"type": "integer", "default": 1, "minimum": 1},
             "per_page": {"type": "integer", "default": 50, "minimum": 1, "maximum": 100},
+            "law_type": {"type": "string"},
+            "year": {"type": "integer"},
+            "status": {"type": "string"},
+            "jurisdiction": {"type": "string"},
+        },
+        "required": ["country"],
+        "additionalProperties": False,
+    },
+)
+
+TOOL_LAWS_ALL = Tool(
+    name="legalize_laws_all",
+    description=(
+        "Search/list laws within a country, automatically paging until exhaustion or max_pages. "
+        "Returns raw page payloads plus a best-effort flattened list when the API returns an array or a {items|data|results} container."
+    ),
+    input_schema={
+        "type": "object",
+        "properties": {
+            "country": {"type": "string"},
+            "q": {"type": "string"},
+            "per_page": {"type": "integer", "default": 100, "minimum": 1, "maximum": 100},
+            "max_pages": {"type": "integer", "default": 5, "minimum": 1, "maximum": 50},
+            "start_page": {"type": "integer", "default": 1, "minimum": 1},
             "law_type": {"type": "string"},
             "year": {"type": "integer"},
             "status": {"type": "string"},
@@ -560,6 +683,7 @@ def _build_tools() -> list[Tool]:
         TOOL_COUNTRIES,
         TOOL_JURISDICTIONS,
         TOOL_LAWS,
+        TOOL_LAWS_ALL,
         TOOL_LAW_META,
         TOOL_LAW_GET,
         TOOL_REFORMS,
@@ -737,6 +861,17 @@ def _handle_tools_call(params: JSON) -> JSON:
             q=_opt_str("q"),
             page=int(args.get("page", 1)),
             per_page=int(args.get("per_page", 50)),
+            law_type=_opt_str("law_type"),
+            year=_opt_int("year"),
+            status=_opt_str("status"),
+            jurisdiction=_opt_str("jurisdiction"),
+        ),
+        "legalize_laws_all": lambda: tool_laws_all(
+            str(args["country"]),
+            q=_opt_str("q"),
+            per_page=int(args.get("per_page", 100)),
+            max_pages=int(args.get("max_pages", 5)),
+            start_page=int(args.get("start_page", 1)),
             law_type=_opt_str("law_type"),
             year=_opt_int("year"),
             status=_opt_str("status"),
