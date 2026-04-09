@@ -100,21 +100,39 @@ def _auth_header_value() -> str:
     return f"Bearer {key}"
 
 
-def _http_get_json(path: str, query: dict[str, Any] | None = None) -> Any:
-    """GET JSON from Legalize.dev.
+def _http_request_json(
+    path: str,
+    *,
+    method: str = "GET",
+    query: dict[str, Any] | None = None,
+    body: Any | None = None,
+) -> Any:
+    """HTTP request returning JSON (or None for empty bodies).
+
+    Supports the minimal subset we need for Legalize.dev:
+    - GET endpoints under /api/v1/*
+    - authenticated POST endpoints like /api/rotate-key
 
     Raises OperationalError with structured data when possible.
     """
 
     url = _build_url(path, query=query)
 
-    req = urllib.request.Request(url)
+    data_bytes: bytes | None = None
+    if body is not None:
+        data_bytes = json.dumps(body).encode("utf-8")
+
+    req = urllib.request.Request(url, method=method.upper(), data=data_bytes)
+
     # OpenAPI securitySchemes.ApiKeyAuth:
     #   in: header
     #   name: Authorization
     #   description: Bearer token
     req.add_header("Authorization", _auth_header_value())
     req.add_header("Accept", "application/json")
+    if data_bytes is not None:
+        req.add_header("Content-Type", "application/json")
+
     req.add_header("User-Agent", f"lawyer-mcp/{__version__} (+https://github.com/pugafran/lawyer-mcp)")
 
     # Lightweight resilience: Legalize can rate-limit (401/429) or have transient upstream errors.
@@ -197,8 +215,19 @@ def _http_get_json(path: str, query: dict[str, Any] | None = None) -> Any:
 
     # Should be unreachable, but keep a guardrail.
     if last_http_error is not None:
-        raise OperationalError(f"HTTP {last_http_error.code} for {url}", data={"status": last_http_error.code, "url": url})
+        raise OperationalError(
+            f"HTTP {last_http_error.code} for {url}",
+            data={"status": last_http_error.code, "url": url},
+        )
     raise OperationalError(f"Request failed for {url}", data={"url": url})
+
+
+def _http_get_json(path: str, query: dict[str, Any] | None = None) -> Any:
+    return _http_request_json(path, method="GET", query=query)
+
+
+def _http_post_json(path: str, body: Any | None = None) -> Any:
+    return _http_request_json(path, method="POST", body=body)
 
 
 def tool_countries() -> JSON:
@@ -271,6 +300,24 @@ def tool_stats(country: str, jurisdiction: str | None = None) -> JSON:
         query={"jurisdiction": jurisdiction},
     )
     return {"country": country, "jurisdiction": jurisdiction, "stats": data}
+
+
+def tool_account() -> JSON:
+    """Account dashboard JSON: tier, usage, limits, reset date.
+
+    OpenAPI: GET /api/account (Bearer token). Does not count against quota.
+    """
+
+    return {"account": _http_get_json("/api/account")}
+
+
+def tool_rotate_key() -> JSON:
+    """Rotate the caller's API key and return the new one.
+
+    OpenAPI: POST /api/rotate-key (Bearer token). Old key becomes invalid immediately.
+    """
+
+    return {"rotated": _http_post_json("/api/rotate-key")}
 
 
 TOOLS: list[Tool] = [
@@ -383,6 +430,16 @@ TOOLS: list[Tool] = [
             "additionalProperties": False,
         },
     ),
+    Tool(
+        name="legalize_account",
+        description="Get account usage/limits info for the current API key (does not count against quota).",
+        input_schema={"type": "object", "properties": {}, "additionalProperties": False},
+    ),
+    Tool(
+        name="legalize_rotate_key",
+        description="Rotate the current API key and return the new key (shown once).",
+        input_schema={"type": "object", "properties": {}, "additionalProperties": False},
+    ),
 ]
 
 
@@ -450,6 +507,10 @@ def _handle_tools_call(params: JSON) -> JSON:
         )
     elif name == "legalize_commits":
         payload = tool_commits(str(args["country"]), str(args["law_id"]))
+    elif name == "legalize_account":
+        payload = tool_account()
+    elif name == "legalize_rotate_key":
+        payload = tool_rotate_key()
     else:
         raise ValueError(f"Unknown tool: {name}")
 
