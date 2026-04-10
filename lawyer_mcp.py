@@ -1002,12 +1002,19 @@ def main() -> None:
         try:
             if method == "initialize":
                 _write(_jsonrpc_result(id_, _handle_initialize(params)))
+            elif method == "notifications/initialized":
+                # MCP notification (no response expected).
+                continue
+            elif method == "ping":
+                _write(_jsonrpc_result(id_, {}))
             elif method == "tools/list":
                 _write(_jsonrpc_result(id_, _handle_tools_list()))
             elif method == "tools/call":
                 _write(_jsonrpc_result(id_, _handle_tools_call(params)))
             else:
-                _write(_jsonrpc_error(id_, -32601, f"Method not found: {method}"))
+                # Only respond to unknown methods if this is a request (has an id).
+                if id_ is not None:
+                    _write(_jsonrpc_error(id_, -32601, f"Method not found: {method}"))
         except (KeyError, ValueError, TypeError) as exc:
             # Invalid params / unknown tool name / type coercion failures.
             _write(
