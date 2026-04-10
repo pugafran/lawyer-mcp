@@ -38,7 +38,8 @@ class TestHttpPost(unittest.TestCase):
 
         captured = {}
 
-        def fake_urlopen(req: urllib.request.Request, timeout: float = 0):
+        def fake_urlopen(req: urllib.request.Request, timeout: float = 0, **kwargs):
+            _ = kwargs  # accept e.g. SSL context
             captured["method"] = getattr(req, "method", None)
             captured["full_url"] = req.full_url
             return FakeResp()

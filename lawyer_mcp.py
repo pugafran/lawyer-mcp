@@ -8,6 +8,7 @@ import os
 import sys
 import traceback
 import time
+import ssl
 import urllib.error
 import urllib.parse
 import urllib.request
@@ -35,6 +36,38 @@ class Tool:
 
 
 DEFAULT_LEGALIZE_BASE_URL = "https://legalize.dev"
+
+
+def build_ssl_context() -> ssl.SSLContext | None:
+    """Return an SSL context for urllib.
+
+    Some environments (notably certain Windows setups) can hit certificate
+    verification issues depending on how Python was installed.
+
+    Controls:
+    - LEGALIZE_SSL_INSECURE=1 disables certificate verification (NOT recommended).
+    - LEGALIZE_SSL_CERT_FILE=/path/to/ca-bundle.pem forces a specific CA bundle.
+
+    If `certifi` is available, we will prefer its CA bundle.
+    """
+
+    if os.environ.get("LEGALIZE_SSL_INSECURE", "").strip() in {"1", "true", "yes"}:
+        ctx = ssl.create_default_context()
+        ctx.check_hostname = False
+        ctx.verify_mode = ssl.CERT_NONE
+        return ctx
+
+    cafile = os.environ.get("LEGALIZE_SSL_CERT_FILE", "").strip() or None
+    if cafile:
+        return ssl.create_default_context(cafile=cafile)
+
+    try:
+        import certifi  # type: ignore
+
+        return ssl.create_default_context(cafile=certifi.where())
+    except Exception:
+        # Fall back to system defaults.
+        return None
 
 
 def _base_url() -> str:
@@ -157,7 +190,8 @@ class LegalizeClient:
 
         for attempt in range(self.max_retries + 1):
             try:
-                with urllib.request.urlopen(req, timeout=self.timeout_s) as resp:
+                context = build_ssl_context()
+                with urllib.request.urlopen(req, timeout=self.timeout_s, context=context) as resp:
                     raw = resp.read().decode("utf-8")
 
                 if not raw.strip():

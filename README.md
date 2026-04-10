@@ -18,6 +18,16 @@ This server expects:
 
 - `LEGALIZE_API_KEY` env var (either the raw `leg_...` token or the full `Bearer leg_...` value)
 
+### TLS / certificates (Codex on Windows)
+
+If you hit errors like `certificate verify failed: certificate signature failure`, your Python/Codex environment may be missing the right CA bundle.
+
+Options:
+- Prefer installing/updating CA certificates in your environment (recommended).
+- Set `LEGALIZE_SSL_CERT_FILE=/path/to/ca-bundle.pem` to point to a CA bundle.
+- If `certifi` is installed, lawyer-mcp will automatically use it.
+- As a last resort (NOT recommended): `LEGALIZE_SSL_INSECURE=1` disables certificate verification.
+
 ## Tools (MCP)
 
 Tools are derived from `https://legalize.dev/openapi.json`.
