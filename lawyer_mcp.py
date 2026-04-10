@@ -767,8 +767,13 @@ def _current_tools() -> list[Tool]:
 TOOLS: list[Tool] = _current_tools()
 
 
-def _handle_initialize(_params: JSON) -> JSON:
+def _handle_initialize(params: JSON) -> JSON:
+    # MCP InitializeResult should include protocolVersion.
+    # Codex CLI is strict about this field.
+    protocol_version = params.get("protocolVersion") or "2024-11-05"
+
     return {
+        "protocolVersion": protocol_version,
         "capabilities": {"tools": {"listChanged": False}},
         "serverInfo": {
             "name": "lawyer-mcp",

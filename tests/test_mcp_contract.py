@@ -26,7 +26,16 @@ class TestMcpContract(unittest.TestCase):
             env={"LEGALIZE_API_KEY": "test"},
         )
         try:
-            resp = send(proc, {"jsonrpc": "2.0", "id": 1, "method": "initialize", "params": {}})
+            resp = send(
+                proc,
+                {
+                    "jsonrpc": "2.0",
+                    "id": 1,
+                    "method": "initialize",
+                    "params": {"protocolVersion": "2024-11-05"},
+                },
+            )
+            self.assertEqual(resp["result"]["protocolVersion"], "2024-11-05")
             self.assertEqual(resp["result"]["serverInfo"]["name"], "lawyer-mcp")
             # serverInfo.version should reflect the package version.
             import lawyer_mcp as lm
@@ -67,7 +76,15 @@ class TestMcpContract(unittest.TestCase):
             },
         )
         try:
-            _ = send(proc, {"jsonrpc": "2.0", "id": 1, "method": "initialize", "params": {}})
+            _ = send(
+                proc,
+                {
+                    "jsonrpc": "2.0",
+                    "id": 1,
+                    "method": "initialize",
+                    "params": {"protocolVersion": "2024-11-05"},
+                },
+            )
             tools = send(proc, {"jsonrpc": "2.0", "id": 2, "method": "tools/list"})
             names = {t["name"] for t in tools["result"]["tools"]}
             self.assertIn("legalize_rotate_key", names)
